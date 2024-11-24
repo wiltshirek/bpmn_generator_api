@@ -27,11 +27,18 @@ async def generate_bpmn(input: ChatInput):
         bpmn_xml = generate_bpmn_xml(intermediary_notation)
         
         logger.info("Successfully generated BPMN XML")
-        return {
+        logger.info(bpmn_xml)
+        
+        # Pre-serialize the intermediary notation
+        intermediary_json = json.dumps(intermediary_notation, indent=2)
+        
+        # Create response with raw XML string
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content={
             "original_prompt": input.text,
-            "intermediary_notation": json.dumps(intermediary_notation, indent=2),
+            "intermediary_notation": intermediary_json,
             "bpmn_xml": bpmn_xml
-        }
+        }, media_type="application/json")
     except Exception as e:
         logger.error(f"Error in generate_bpmn: {str(e)}")
         logger.error(f"Stack trace:\n{traceback.format_exc()}")

@@ -38,6 +38,8 @@ def validate_intermediary_notation(notation: Dict[str, Any]) -> None:
 def validate_bpmn_xml(xml_str: str) -> None:
     """Validate the generated BPMN XML."""
     try:
+
+        # Parse and validate the cleaned XML
         doc = minidom.parseString(xml_str)
         required_elements = [
             'bpmn:definitions',

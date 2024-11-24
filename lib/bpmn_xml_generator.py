@@ -3,6 +3,9 @@ from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 from .validation import validate_intermediary_notation, validate_bpmn_xml
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Position:
@@ -35,6 +38,7 @@ class BPMNXMLGenerator:
             xml_str = self._clean_xml_output(xml_str)
             
             validate_bpmn_xml(xml_str)
+            
             return xml_str
             
         except Exception as e:
@@ -42,20 +46,28 @@ class BPMNXMLGenerator:
 
     def _clean_xml_output(self, xml_str: str) -> str:
         """Clean up the XML output by removing escape sequences and extra whitespace."""
-        # Remove escaped quotes
-        xml_str = xml_str.replace('\\"', '"')
-        
-        # Remove other common escape sequences
-        xml_str = xml_str.replace('\\n', '')
-        xml_str = xml_str.replace('\\r', '')
-        xml_str = xml_str.replace('\\t', '')
-        
-        # Remove empty lines while preserving indentation
+        # First split into lines
         lines = xml_str.split('\n')
-        lines = [line for line in lines if line.strip()]
-        xml_str = '\n'.join(lines)
         
-        return xml_str
+        # Clean each line individually
+        cleaned_lines = []
+        for line in lines:
+            if line.strip():  # Only process non-empty lines
+                # Remove escaped quotes and other escape sequences
+                line = line.replace('\\"', '"')
+                line = line.replace('\\r', '')
+                line = line.replace('\\t', '')
+                line = line.replace('\\n', '')
+                cleaned_lines.append(line.strip())  # strip whitespace from each line
+        
+        # Join all lines into a single string with no newlines
+        result = ''.join(cleaned_lines)
+        
+        # Log the XML string before and after cleaning
+        logger.debug(f"Original XML string (first 100 chars): {xml_str[:100]}")
+        logger.debug(f"Cleaned XML output (first 100 chars): {result[:100]}")
+        
+        return result
 
     def _create_definitions(self) -> minidom.Element:
         """Create and configure the BPMN definitions element."""
@@ -133,9 +145,6 @@ class BPMNXMLGenerator:
             seq_flow.setAttribute('sourceRef', flow['sourceRef'])
             seq_flow.setAttribute('targetRef', flow['targetRef'])
             
-            if 'messageRef' in flow:
-                seq_flow.setAttribute('messageRef', flow['messageRef'])
-            
             if 'conditionExpression' in flow:
                 condition = self.doc.createElement('bpmn:conditionExpression')
                 condition.setAttribute('xsi:type', 'bpmn:tFormalExpression')
@@ -163,6 +172,7 @@ class BPMNXMLGenerator:
                             intermediary_notation: Dict[str, Any]) -> None:
         x, y = 100, 100
         
+        # First create all shapes
         for element in intermediary_notation['elements']:
             shape = self.doc.createElement('bpmndi:BPMNShape')
             shape.setAttribute('id', f"{element['id']}_di")
@@ -174,11 +184,35 @@ class BPMNXMLGenerator:
             
             x += 150
         
+        # Then create all edges (sequence flows)
         for flow in intermediary_notation['sequence_flows']:
             edge = self.doc.createElement('bpmndi:BPMNEdge')
             edge.setAttribute('id', f"{flow['id']}_di")
             edge.setAttribute('bpmnElement', flow['id'])
+            
+            # Create waypoints for the sequence flow
+            waypoint1 = self.doc.createElement('di:waypoint')
+            waypoint2 = self.doc.createElement('di:waypoint')
+            
+            # Set positions for source and target
+            source_x = 100 + (150 * self._get_element_index(flow['sourceRef'], intermediary_notation))
+            target_x = 100 + (150 * self._get_element_index(flow['targetRef'], intermediary_notation))
+            
+            waypoint1.setAttribute('x', str(source_x + 100))  # End of source element
+            waypoint1.setAttribute('y', str(y + 40))
+            waypoint2.setAttribute('x', str(target_x))        # Start of target element
+            waypoint2.setAttribute('y', str(y + 40))
+            
+            edge.appendChild(waypoint1)
+            edge.appendChild(waypoint2)
             plane.appendChild(edge)
+
+    def _get_element_index(self, element_id: str, intermediary_notation: Dict[str, Any]) -> int:
+        """Helper method to find the index of an element in the elements array."""
+        for i, element in enumerate(intermediary_notation['elements']):
+            if element['id'] == element_id:
+                return i
+        return 0
 
 # Create a singleton instance
 _generator = BPMNXMLGenerator()
