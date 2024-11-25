@@ -58,3 +58,22 @@ def validate_element(element: Dict[str, Any]) -> None:
     for field in required_fields:
         if field not in element:
             raise ValidationError(f"Missing required field {field} in element: {element}")
+    
+    if 'type' not in element:
+        raise ValidationError(f"Missing type in element: {element}")
+    
+    if element['type'] == 'subProcess':
+        if 'elements' in element:
+            # Validate all nested elements
+            elements_by_id = {}
+            for nested_element in element['elements']:
+                validate_element(nested_element)
+                elements_by_id[nested_element['id']] = nested_element
+            
+            # Validate sequence flows within subprocess
+            flows = [e for e in element['elements'] if e['type'] == 'sequenceFlow']
+            for flow in flows:
+                if flow['sourceRef'] not in elements_by_id:
+                    raise ValidationError(f"Invalid sourceRef in subprocess flow: {flow}")
+                if flow['targetRef'] not in elements_by_id:
+                    raise ValidationError(f"Invalid targetRef in subprocess flow: {flow}")

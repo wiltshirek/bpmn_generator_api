@@ -2,31 +2,70 @@ def generate_intermediary_notation(parsed_elements: dict) -> dict:
     elements = []
     sequence_flows = []
     
-    def add_element(type_name: str, name: str, element_id: str, additional_props: dict = None) -> str:
-        element = {
-            "id": element_id,
-            "type": type_name,
-            "name": name
-        }
-        if additional_props:
-            element.update(additional_props)
-        elements.append(element)
-        return element_id
-
-    # Process elements
-    for element in parsed_elements['elements']:
+    def process_element(element: dict) -> dict:
+        """Recursively process elements and their substeps"""
         if element['type'] == 'subProcess':
-            # Keep as subProcess but mark as collapsed
-            add_element('subProcess', element['name'], element['id'], {
-                'isExpanded': False
-            })
+            subprocess_element = {
+                "id": element['id'],
+                "type": "subProcess",
+                "name": element['name'],
+                "isExpanded": False,
+                "elements": []
+            }
+            
+            if 'substeps' in element:
+                # Add start event
+                start_id = f"{element['id']}_start"
+                subprocess_element['elements'].append({
+                    "id": start_id,
+                    "type": "startEvent",
+                    "name": "Start"
+                })
+                
+                prev_id = start_id
+                for idx, substep in enumerate(element['substeps']):
+                    # Recursively process substep in case it has its own substeps
+                    substep_id = f"{element['id']}_substep_{idx}"
+                    substep['id'] = substep_id  # Set the ID before processing
+                    processed_substep = process_element(substep)  # Recursive call
+                    subprocess_element['elements'].append(processed_substep)
+                    
+                    # Create sequence flow
+                    subprocess_element['elements'].append({
+                        "id": f"{element['id']}_flow_{idx}",
+                        "type": "sequenceFlow",
+                        "sourceRef": prev_id,
+                        "targetRef": substep_id
+                    })
+                    prev_id = substep_id
+                
+                # Add end event and final flow
+                end_id = f"{element['id']}_end"
+                subprocess_element['elements'].append({
+                    "id": end_id,
+                    "type": "endEvent",
+                    "name": "End"
+                })
+                subprocess_element['elements'].append({
+                    "id": f"{element['id']}_flow_end",
+                    "type": "sequenceFlow",
+                    "sourceRef": prev_id,
+                    "targetRef": end_id
+                })
+            
+            return subprocess_element
         else:
-            add_element(
-                element['type'],
-                element['name'],
-                element['id'],
-                {'taskType': element.get('taskType'), 'performer': element.get('performer')}
-            )
+            return {
+                "id": element['id'],
+                "type": element['type'],
+                "name": element['name'],
+                "taskType": element.get('taskType'),
+                "performer": element.get('performer')
+            }
+
+    # Process all top-level elements
+    for element in parsed_elements['elements']:
+        elements.append(process_element(element))
 
     # Process sequence flows
     for flow in parsed_elements['sequence_flows']:

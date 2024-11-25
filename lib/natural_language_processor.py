@@ -18,36 +18,24 @@ def process_text(text: str) -> dict:
         1. Always include process_id and process_name
         2. Always include elements array with at least start and end events
         3. Each task must have type, id, and name
-        4. Include sequence flows connecting all elements
+        4. Include sequence flows connecting all elements with proper IDs
         5. Use proper BPMN types: startEvent, endEvent, userTask, serviceTask, manualTask, exclusiveGateway
-        6. Group related tasks into subProcesses when appropriate
+        6. Group related tasks into subProcesses, which can contain other subProcesses
 
-        Required JSON structure:
+        Example JSON structure with nested substeps:
         {
             "process_id": "Process_1",
             "process_name": "Business Process Name",
             "elements": [
                 {
-                    "id": "StartEvent_1",
-                    "type": "startEvent",
-                    "name": "Start"
-                },
-                {
                     "id": "SubProcess_1",
                     "type": "subProcess",
                     "name": "Handle Order",
-                    "elements": [
+                    "substeps": [
                         {
                             "id": "Task_1",
                             "type": "userTask",
-                            "name": "Review Order",
-                            "performer": "Sales Team"
-                        },
-                        {
-                            "id": "Task_2",
-                            "type": "manualTask",
-                            "name": "Process Order",
-                            "performer": "Warehouse"
+                            "name": "Review Order"
                         }
                     ]
                 }
@@ -59,9 +47,7 @@ def process_text(text: str) -> dict:
                     "targetRef": "SubProcess_1"
                 }
             ]
-        }
-
-        Convert the following process description to this exact JSON structure:"""
+        }"""
 
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",

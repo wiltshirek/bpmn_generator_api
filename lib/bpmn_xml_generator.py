@@ -24,6 +24,8 @@ class BPMNXMLGenerator:
         try:
             # Create a new document instance for each generation
             self.doc = minidom.Document()
+            # Store current elements for position calculations
+            self._current_elements = intermediary_notation['elements']
             
             validate_intermediary_notation(intermediary_notation)
             
@@ -111,12 +113,27 @@ class BPMNXMLGenerator:
         bpmn_element.setAttribute('name', element.get('name', ''))
         
         if element['type'] == 'subProcess':
-            # No need to add nested elements for collapsed subprocess
             bpmn_element.setAttribute('triggeredByEvent', 'false')
-        elif element.get('taskType'):
-            bpmn_element.setAttribute('camunda:assignee', element.get('performer', ''))
+            parent_element.appendChild(bpmn_element)
+            
+            # Create nested elements within the subprocess
+            if 'elements' in element:
+                for nested_element in element['elements']:
+                    if nested_element['type'] == 'sequenceFlow':
+                        # Handle sequence flows within subprocess
+                        seq_flow = self.doc.createElement('bpmn:sequenceFlow')
+                        seq_flow.setAttribute('id', nested_element['id'])
+                        seq_flow.setAttribute('sourceRef', nested_element['sourceRef'])
+                        seq_flow.setAttribute('targetRef', nested_element['targetRef'])
+                        bpmn_element.appendChild(seq_flow)
+                    else:
+                        # Create regular nested element
+                        nested_bpmn = self._create_element(bpmn_element, nested_element)
+        else:
+            if element.get('taskType'):
+                bpmn_element.setAttribute('camunda:assignee', element.get('performer', ''))
+            parent_element.appendChild(bpmn_element)
         
-        parent_element.appendChild(bpmn_element)
         return bpmn_element
 
     def _create_bounds(self, position: Position) -> minidom.Element:
@@ -167,25 +184,47 @@ class BPMNXMLGenerator:
             shape = self._create_shape(element, x, y)
             plane.appendChild(shape)
             
-            x += 150
+            # Handle subprocess internal elements
+            if element['type'] == 'subProcess' and 'elements' in element:
+                subprocess_x = x + 50  # Start internal elements with offset
+                subprocess_y = y + 50
+                
+                for internal_element in element['elements']:
+                    if internal_element['type'] != 'sequenceFlow':
+                        internal_shape = self._create_shape(internal_element, subprocess_x, subprocess_y)
+                        plane.appendChild(internal_shape)
+                        subprocess_x += 120  # Space between internal elements
+            
+            x += 200  # Increased spacing between main elements
         
-        # Then create all edges (sequence flows)
-        for flow in intermediary_notation['sequence_flows']:
+        # Create edges for main sequence flows
+        self._create_sequence_flow_edges(plane, intermediary_notation['sequence_flows'], y)
+        
+        # Create edges for subprocess sequence flows
+        for element in intermediary_notation['elements']:
+            if element['type'] == 'subProcess' and 'elements' in element:
+                subprocess_flows = [e for e in element['elements'] 
+                                  if e['type'] == 'sequenceFlow']
+                self._create_sequence_flow_edges(plane, subprocess_flows, y + 50)
+
+    def _create_sequence_flow_edges(self, plane: minidom.Element, 
+                              flows: List[Dict[str, Any]], y: int) -> None:
+        for flow in flows:
             edge = self.doc.createElement('bpmndi:BPMNEdge')
             edge.setAttribute('id', f"{flow['id']}_di")
             edge.setAttribute('bpmnElement', flow['id'])
             
-            # Create waypoints for the sequence flow
+            # Create waypoints
             waypoint1 = self.doc.createElement('di:waypoint')
             waypoint2 = self.doc.createElement('di:waypoint')
             
-            # Set positions for source and target
-            source_x = 100 + (150 * self._get_element_index(flow['sourceRef'], intermediary_notation))
-            target_x = 100 + (150 * self._get_element_index(flow['targetRef'], intermediary_notation))
+            # Calculate positions based on source and target elements
+            source_x = self._get_element_x_position(flow['sourceRef'])
+            target_x = self._get_element_x_position(flow['targetRef'])
             
-            waypoint1.setAttribute('x', str(source_x + 100))  # End of source element
+            waypoint1.setAttribute('x', str(source_x + 100))
             waypoint1.setAttribute('y', str(y + 40))
-            waypoint2.setAttribute('x', str(target_x))        # Start of target element
+            waypoint2.setAttribute('x', str(target_x))
             waypoint2.setAttribute('y', str(y + 40))
             
             edge.appendChild(waypoint1)
@@ -206,17 +245,53 @@ class BPMNXMLGenerator:
         shape.setAttribute('bpmnElement', element['id'])
         
         if element['type'] == 'subProcess':
-            # Set collapsed state in the diagram
-            shape.setAttribute('isExpanded', 'false')
-        
-        bounds = self.doc.createElement('dc:Bounds')
-        bounds.setAttribute('x', str(x))
-        bounds.setAttribute('y', str(y))
-        bounds.setAttribute('width', '100')
-        bounds.setAttribute('height', '80')
+            # Set expanded state in the diagram
+            shape.setAttribute('isExpanded', 'true')
+            
+            # Create larger bounds for subprocess
+            bounds = self.doc.createElement('dc:Bounds')
+            bounds.setAttribute('x', str(x))
+            bounds.setAttribute('y', str(y))
+            bounds.setAttribute('width', '350')  # Wider to accommodate internal elements
+            bounds.setAttribute('height', '200')  # Taller to accommodate internal elements
+        else:
+            bounds = self.doc.createElement('dc:Bounds')
+            bounds.setAttribute('x', str(x))
+            bounds.setAttribute('y', str(y))
+            bounds.setAttribute('width', '100')
+            bounds.setAttribute('height', '80')
         
         shape.appendChild(bounds)
         return shape
+
+    def _get_element_x_position(self, element_id: str) -> int:
+        """Calculate x position for an element based on its ID."""
+        # Base x position
+        x = self.x
+        
+        # Check if this is a subprocess element
+        if '_substep_' in element_id:
+            # Extract subprocess base position and add offset
+            subprocess_id = element_id.split('_substep_')[0]
+            step_number = int(element_id.split('_substep_')[1])
+            return x + (step_number * 120) + 50  # 120px spacing between elements, 50px initial offset
+        
+        # Check if this is a start/end event in subprocess
+        elif '_start' in element_id or '_end' in element_id:
+            subprocess_id = element_id.split('_')[0]
+            if '_end' in element_id:
+                # Place end event at the right side of subprocess
+                return x + 300  # Assuming subprocess width is 350
+            return x + 50  # Start event offset
+        
+        # For main process elements
+        else:
+            element_index = 0
+            for element in self._current_elements:
+                if element['id'] == element_id:
+                    break
+                element_index += 1
+            return x + (element_index * 200)  # 200px spacing between main elements
 
 # Create a singleton instance
 _generator = BPMNXMLGenerator()
