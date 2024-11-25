@@ -22,6 +22,9 @@ class BPMNXMLGenerator:
     def generate_bpmn_xml(self, intermediary_notation: Dict[str, Any]) -> str:
         """Generate BPMN XML from intermediary notation."""
         try:
+            # Create a new document instance for each generation
+            self.doc = minidom.Document()
+            
             validate_intermediary_notation(intermediary_notation)
             
             definitions = self._create_definitions()
@@ -99,35 +102,22 @@ class BPMNXMLGenerator:
     def _create_all_elements(self, process: minidom.Element,
                            intermediary_notation: Dict[str, Any]) -> None:
         for element in intermediary_notation['elements']:
-            self._create_element(element, process)
+            self._create_element(process, element)
 
-    def _create_element(self, element_data: Dict[str, Any], 
-                       parent: minidom.Element, 
-                       position: Optional[Position] = None) -> minidom.Element:
-        element = self.doc.createElement(f"bpmn:{element_data['type']}")
-        element.setAttribute('id', element_data['id'])
-        element.setAttribute('name', element_data['name'])
+    def _create_element(self, parent_element: minidom.Element, element: Dict[str, Any]) -> Optional[minidom.Element]:
+        """Create a BPMN element based on its type."""
+        bpmn_element = self.doc.createElement(f"bpmn:{element['type']}")
+        bpmn_element.setAttribute('id', element['id'])
+        bpmn_element.setAttribute('name', element.get('name', ''))
         
-        if element_data['type'] == 'subProcess':
-            element.setAttribute('triggeredByEvent', 'false')
-            for nested_element in element_data.get('elements', []):
-                self._create_element(nested_element, element)
-        elif 'taskType' in element_data:
-            element.setAttribute('camunda:assignee', element_data.get('performer', ''))
+        if element['type'] == 'subProcess':
+            # No need to add nested elements for collapsed subprocess
+            bpmn_element.setAttribute('triggeredByEvent', 'false')
+        elif element.get('taskType'):
+            bpmn_element.setAttribute('camunda:assignee', element.get('performer', ''))
         
-        if 'conditions' in element_data:
-            for condition in element_data['conditions']:
-                condition_element = self.doc.createElement('bpmn:conditionExpression')
-                condition_element.setAttribute('xsi:type', 'bpmn:tFormalExpression')
-                condition_element.appendChild(self.doc.createTextNode(condition['condition']))
-                element.appendChild(condition_element)
-        
-        if position:
-            bounds = self._create_bounds(position)
-            element.appendChild(bounds)
-        
-        parent.appendChild(element)
-        return element
+        parent_element.appendChild(bpmn_element)
+        return bpmn_element
 
     def _create_bounds(self, position: Position) -> minidom.Element:
         bounds = self.doc.createElement('dc:Bounds')
@@ -174,12 +164,7 @@ class BPMNXMLGenerator:
         
         # First create all shapes
         for element in intermediary_notation['elements']:
-            shape = self.doc.createElement('bpmndi:BPMNShape')
-            shape.setAttribute('id', f"{element['id']}_di")
-            shape.setAttribute('bpmnElement', element['id'])
-            
-            bounds = self._create_bounds(Position(x, y))
-            shape.appendChild(bounds)
+            shape = self._create_shape(element, x, y)
             plane.appendChild(shape)
             
             x += 150
@@ -213,6 +198,25 @@ class BPMNXMLGenerator:
             if element['id'] == element_id:
                 return i
         return 0
+
+    def _create_shape(self, element: Dict[str, Any], x: int, y: int) -> minidom.Element:
+        """Create a BPMN shape with proper bounds."""
+        shape = self.doc.createElement('bpmndi:BPMNShape')
+        shape.setAttribute('id', f"{element['id']}_di")
+        shape.setAttribute('bpmnElement', element['id'])
+        
+        if element['type'] == 'subProcess':
+            # Set collapsed state in the diagram
+            shape.setAttribute('isExpanded', 'false')
+        
+        bounds = self.doc.createElement('dc:Bounds')
+        bounds.setAttribute('x', str(x))
+        bounds.setAttribute('y', str(y))
+        bounds.setAttribute('width', '100')
+        bounds.setAttribute('height', '80')
+        
+        shape.appendChild(bounds)
+        return shape
 
 # Create a singleton instance
 _generator = BPMNXMLGenerator()

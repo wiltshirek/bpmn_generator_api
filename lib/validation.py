@@ -19,21 +19,19 @@ def validate_intermediary_notation(notation: Dict[str, Any]) -> None:
     if not notation['elements']:
         raise ValidationError("Elements array cannot be empty")
     
-    element_ids = set()
-    for element in notation['elements']:
-        if not all(key in element for key in ['id', 'type', 'name']):
-            raise ValidationError(f"Invalid element structure: {json.dumps(element)}")
-        if element['id'] in element_ids:
-            raise ValidationError(f"Duplicate element ID: {element['id']}")
-        element_ids.add(element['id'])
+    def validate_element(element):
+        if 'type' not in element:
+            raise ValidationError(f"Missing type in element: {element}")
+        if element['type'] == 'subProcess':
+            if element.get('isExpanded', True) and 'elements' not in element:
+                raise ValidationError(f"Expanded subprocess missing elements array: {element}")
+            if 'elements' in element:
+                for nested_element in element['elements']:
+                    validate_element(nested_element)
     
-    for flow in notation['sequence_flows']:
-        if not all(key in flow for key in ['id', 'sourceRef', 'targetRef']):
-            raise ValidationError(f"Invalid flow structure: {json.dumps(flow)}")
-        if flow['sourceRef'] not in element_ids:
-            raise ValidationError(f"Invalid sourceRef: {flow['sourceRef']}")
-        if flow['targetRef'] not in element_ids:
-            raise ValidationError(f"Invalid targetRef: {flow['targetRef']}")
+    # Validate all elements including nested ones
+    for element in notation['elements']:
+        validate_element(element)
 
 def validate_bpmn_xml(xml_str: str) -> None:
     """Validate the generated BPMN XML."""
@@ -53,3 +51,10 @@ def validate_bpmn_xml(xml_str: str) -> None:
                 raise ValidationError(f"Missing required element: {element}")
     except Exception as e:
         raise ValidationError(f"Invalid BPMN XML: {str(e)}") 
+
+def validate_element(element: Dict[str, Any]) -> None:
+    """Validate a single BPMN element."""
+    required_fields = ['id', 'type', 'name']
+    for field in required_fields:
+        if field not in element:
+            raise ValidationError(f"Missing required field {field} in element: {element}")

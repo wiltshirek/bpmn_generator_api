@@ -20,6 +20,7 @@ def process_text(text: str) -> dict:
         3. Each task must have type, id, and name
         4. Include sequence flows connecting all elements
         5. Use proper BPMN types: startEvent, endEvent, userTask, serviceTask, manualTask, exclusiveGateway
+        6. Group related tasks into subProcesses when appropriate
 
         Required JSON structure:
         {
@@ -32,17 +33,30 @@ def process_text(text: str) -> dict:
                     "name": "Start"
                 },
                 {
-                    "id": "Task_1",
-                    "type": "userTask",
-                    "name": "Submit Order",
-                    "performer": "Customer"
+                    "id": "SubProcess_1",
+                    "type": "subProcess",
+                    "name": "Handle Order",
+                    "elements": [
+                        {
+                            "id": "Task_1",
+                            "type": "userTask",
+                            "name": "Review Order",
+                            "performer": "Sales Team"
+                        },
+                        {
+                            "id": "Task_2",
+                            "type": "manualTask",
+                            "name": "Process Order",
+                            "performer": "Warehouse"
+                        }
+                    ]
                 }
             ],
             "sequence_flows": [
                 {
                     "id": "Flow_1",
                     "sourceRef": "StartEvent_1",
-                    "targetRef": "Task_1"
+                    "targetRef": "SubProcess_1"
                 }
             ]
         }
