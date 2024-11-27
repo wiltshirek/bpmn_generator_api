@@ -6,6 +6,7 @@ from .constants import BPMN_TYPES, LAYOUT_SETTINGS
 import re
 import logging
 import xml.etree.ElementTree as ET
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +25,42 @@ class BPMNXMLGenerator:
     def generate_bpmn_xml(self, intermediary: dict) -> str:
         """Generate BPMN XML from intermediary notation."""
         try:
-            # Create a new document instance for each generation
+            logger.debug("Starting BPMN XML generation")
+            logger.debug(f"Input intermediary notation: {json.dumps(intermediary, indent=2)}")
+            
             self.doc = minidom.Document()
-            # Store current elements for position calculations
             self._current_elements = intermediary['elements']
             
+            logger.debug("Validating intermediary notation")
             validate_intermediary_notation(intermediary)
             
+            logger.debug("Creating BPMN definitions")
             definitions = self._create_definitions()
+            
+            logger.debug("Creating main process")
             process = self._create_process(definitions, intermediary)
+            
+            logger.debug("Creating BPMN elements")
             self._create_all_elements(process, intermediary)
+            
+            logger.debug("Creating sequence flows")
             self._create_sequence_flows(process, intermediary)
+            
+            logger.debug("Creating diagram layout")
             self._create_and_append_diagram(definitions, intermediary)
 
-            # Generate XML without pretty printing and remove newlines
             xml_str = self.doc.toxml(encoding="UTF-8").decode('utf-8')
             xml_str = xml_str.replace('\n', '').replace('\r', '')
             
+            logger.debug("Validating final BPMN XML")
             validate_bpmn_xml(xml_str)
             
+            logger.debug(f"Successfully generated BPMN XML (length: {len(xml_str)})")
             return xml_str
             
         except Exception as e:
-            raise Exception(f"Failed to generate BPMN XML: {str(e)}")
+            logger.error(f"Failed to generate BPMN XML: {str(e)}")
+            raise
 
     def _clean_xml_output(self, xml_str: str) -> str:
         """Clean up the XML output by removing escape sequences and extra whitespace."""
