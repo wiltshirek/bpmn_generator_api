@@ -1,30 +1,25 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from lib.bpmn_generator import router as bpmn_router
 from api.chat import router as chat_router
-from core.logger import logger
-import traceback
 
-app = FastAPI()
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="BPMN Generator API",
+    description="API for generating and modifying BPMN diagrams",
+    version="1.0.0"
 )
 
-# Add exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    logger.error(f"Global exception handler caught: {str(exc)}")
-    logger.error(f"Stack trace:\n{traceback.format_exc()}")
-    return {"detail": str(exc), "stack_trace": traceback.format_exc()}
+# Register routers with proper prefixes
+app.include_router(bpmn_router, prefix="/api/v1", tags=["BPMN"])
+app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
 
-app.include_router(chat_router)
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": "1.0.0"
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting BPMN Generator API...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

@@ -1,20 +1,18 @@
-from pydantic import BaseSettings
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
+from openai import OpenAI
 
-# Load environment variables from .env file
 load_dotenv()
 
-class Settings(BaseSettings):
-    # API Configuration
-    API_V1_STR: str = "/api/v1"
+class Settings:
     PROJECT_NAME: str = "BPMN Generator API"
-    
-    # OpenAI Configuration
+    PROJECT_VERSION: str = "1.0.0"
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
     
-    class Config:
-        case_sensitive = True
+    @property
+    def openai_client(self):
+        if not hasattr(self, '_openai_client'):
+            self._openai_client = OpenAI(api_key=self.OPENAI_API_KEY)
+        return self._openai_client
 
-# Create global settings object
-settings = Settings() 
+settings = Settings()

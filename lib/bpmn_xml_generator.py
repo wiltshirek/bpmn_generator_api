@@ -2,8 +2,10 @@ from xml.dom import minidom
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass
 from .validation import validate_intermediary_notation, validate_bpmn_xml
+from .constants import BPMN_TYPES, LAYOUT_SETTINGS
 import re
 import logging
+import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
@@ -19,28 +21,25 @@ class BPMNXMLGenerator:
         self.y = 100
         self.lane_height = 200
 
-    def generate_bpmn_xml(self, intermediary_notation: Dict[str, Any]) -> str:
+    def generate_bpmn_xml(self, intermediary: dict) -> str:
         """Generate BPMN XML from intermediary notation."""
         try:
             # Create a new document instance for each generation
             self.doc = minidom.Document()
             # Store current elements for position calculations
-            self._current_elements = intermediary_notation['elements']
+            self._current_elements = intermediary['elements']
             
-            validate_intermediary_notation(intermediary_notation)
+            validate_intermediary_notation(intermediary)
             
             definitions = self._create_definitions()
-            process = self._create_process(definitions, intermediary_notation)
-            self._create_all_elements(process, intermediary_notation)
-            self._create_sequence_flows(process, intermediary_notation)
-            self._create_and_append_diagram(definitions, intermediary_notation)
+            process = self._create_process(definitions, intermediary)
+            self._create_all_elements(process, intermediary)
+            self._create_sequence_flows(process, intermediary)
+            self._create_and_append_diagram(definitions, intermediary)
 
-            # Generate XML with proper indentation
-            xml_str = self.doc.toprettyxml(indent="  ", encoding="UTF-8")
-            xml_str = xml_str.decode('utf-8')
-            
-            # Clean up the XML string
-            xml_str = self._clean_xml_output(xml_str)
+            # Generate XML without pretty printing and remove newlines
+            xml_str = self.doc.toxml(encoding="UTF-8").decode('utf-8')
+            xml_str = xml_str.replace('\n', '').replace('\r', '')
             
             validate_bpmn_xml(xml_str)
             
@@ -93,22 +92,23 @@ class BPMNXMLGenerator:
         return definitions
 
     def _create_process(self, definitions: minidom.Element, 
-                       intermediary_notation: Dict[str, Any]) -> minidom.Element:
+                       intermediary: dict) -> minidom.Element:
         process = self.doc.createElement('bpmn:process')
-        process.setAttribute('id', intermediary_notation['process_id'])
-        process.setAttribute('name', intermediary_notation['process_name'])
+        process.setAttribute('id', intermediary['process_id'])
+        process.setAttribute('name', intermediary['process_name'])
         process.setAttribute('isExecutable', 'true')
         definitions.appendChild(process)
         return process
 
     def _create_all_elements(self, process: minidom.Element,
-                           intermediary_notation: Dict[str, Any]) -> None:
-        for element in intermediary_notation['elements']:
+                           intermediary: dict) -> None:
+        for element in intermediary['elements']:
             self._create_element(process, element)
 
     def _create_element(self, parent_element: minidom.Element, element: Dict[str, Any]) -> Optional[minidom.Element]:
         """Create a BPMN element based on its type."""
-        bpmn_element = self.doc.createElement(f"bpmn:{element['type']}")
+        xml_type = BPMN_TYPES[element['type']]['xml_type']
+        bpmn_element = self.doc.createElement(f"bpmn:{xml_type}")
         bpmn_element.setAttribute('id', element['id'])
         bpmn_element.setAttribute('name', element.get('name', ''))
         
@@ -136,17 +136,18 @@ class BPMNXMLGenerator:
         
         return bpmn_element
 
-    def _create_bounds(self, position: Position) -> minidom.Element:
+    def _create_bounds(self, position: Position, element_type: str) -> minidom.Element:
+        dimensions = BPMN_TYPES[element_type]['dimensions']
         bounds = self.doc.createElement('dc:Bounds')
         bounds.setAttribute('x', str(position.x))
         bounds.setAttribute('y', str(position.y))
-        bounds.setAttribute('width', '100')
-        bounds.setAttribute('height', '80')
+        bounds.setAttribute('width', str(dimensions['width']))
+        bounds.setAttribute('height', str(dimensions['height']))
         return bounds
 
     def _create_sequence_flows(self, process: minidom.Element, 
-                             intermediary_notation: Dict[str, Any]) -> None:
-        for flow in intermediary_notation['sequence_flows']:
+                             intermediary: dict) -> None:
+        for flow in intermediary['sequence_flows']:
             seq_flow = self.doc.createElement('bpmn:sequenceFlow')
             seq_flow.setAttribute('id', flow['id'])
             seq_flow.setAttribute('sourceRef', flow['sourceRef'])
@@ -162,25 +163,25 @@ class BPMNXMLGenerator:
             process.appendChild(seq_flow)
 
     def _create_and_append_diagram(self, definitions: minidom.Element, 
-                                 intermediary_notation: Dict[str, Any]) -> None:
+                                 intermediary: dict) -> None:
         diagram = self.doc.createElement('bpmndi:BPMNDiagram')
         diagram.setAttribute('id', 'BPMNDiagram_1')
         
         plane = self.doc.createElement('bpmndi:BPMNPlane')
         plane.setAttribute('id', 'BPMNPlane_1')
-        plane.setAttribute('bpmnElement', intermediary_notation['process_id'])
+        plane.setAttribute('bpmnElement', intermediary['process_id'])
         
-        self._add_shapes_and_edges(plane, intermediary_notation)
+        self._add_shapes_and_edges(plane, intermediary)
         
         diagram.appendChild(plane)
         definitions.appendChild(diagram)
 
     def _add_shapes_and_edges(self, plane: minidom.Element, 
-                            intermediary_notation: Dict[str, Any]) -> None:
+                            intermediary: dict) -> None:
         x, y = 100, 100
         
         # First create all shapes
-        for element in intermediary_notation['elements']:
+        for element in intermediary['elements']:
             shape = self._create_shape(element, x, y)
             plane.appendChild(shape)
             
@@ -195,13 +196,13 @@ class BPMNXMLGenerator:
                         plane.appendChild(internal_shape)
                         subprocess_x += 120  # Space between internal elements
             
-            x += 200  # Increased spacing between main elements
+            x += LAYOUT_SETTINGS['element_spacing']  # Increased spacing between main elements
         
         # Create edges for main sequence flows
-        self._create_sequence_flow_edges(plane, intermediary_notation['sequence_flows'], y)
+        self._create_sequence_flow_edges(plane, intermediary['sequence_flows'], y)
         
         # Create edges for subprocess sequence flows
-        for element in intermediary_notation['elements']:
+        for element in intermediary['elements']:
             if element['type'] == 'subProcess' and 'elements' in element:
                 subprocess_flows = [e for e in element['elements'] 
                                   if e['type'] == 'sequenceFlow']
@@ -231,9 +232,9 @@ class BPMNXMLGenerator:
             edge.appendChild(waypoint2)
             plane.appendChild(edge)
 
-    def _get_element_index(self, element_id: str, intermediary_notation: Dict[str, Any]) -> int:
+    def _get_element_index(self, element_id: str, intermediary: dict) -> int:
         """Helper method to find the index of an element in the elements array."""
-        for i, element in enumerate(intermediary_notation['elements']):
+        for i, element in enumerate(intermediary['elements']):
             if element['id'] == element_id:
                 return i
         return 0
@@ -245,22 +246,9 @@ class BPMNXMLGenerator:
         shape.setAttribute('bpmnElement', element['id'])
         
         if element['type'] == 'subProcess':
-            # Set expanded state in the diagram
             shape.setAttribute('isExpanded', 'true')
-            
-            # Create larger bounds for subprocess
-            bounds = self.doc.createElement('dc:Bounds')
-            bounds.setAttribute('x', str(x))
-            bounds.setAttribute('y', str(y))
-            bounds.setAttribute('width', '350')  # Wider to accommodate internal elements
-            bounds.setAttribute('height', '200')  # Taller to accommodate internal elements
-        else:
-            bounds = self.doc.createElement('dc:Bounds')
-            bounds.setAttribute('x', str(x))
-            bounds.setAttribute('y', str(y))
-            bounds.setAttribute('width', '100')
-            bounds.setAttribute('height', '80')
         
+        bounds = self._create_bounds(Position(x, y), element['type'])
         shape.appendChild(bounds)
         return shape
 
@@ -296,7 +284,7 @@ class BPMNXMLGenerator:
 # Create a singleton instance
 _generator = BPMNXMLGenerator()
 
-def generate_bpmn_xml(intermediary_notation: Dict[str, Any]) -> str:
+def generate_bpmn_xml(intermediary: dict) -> str:
     """Generate BPMN XML from intermediary notation using the singleton generator."""
-    return _generator.generate_bpmn_xml(intermediary_notation)
+    return _generator.generate_bpmn_xml(intermediary)
 

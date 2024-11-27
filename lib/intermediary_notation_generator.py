@@ -1,85 +1,60 @@
-def generate_intermediary_notation(parsed_elements: dict) -> dict:
-    elements = []
-    sequence_flows = []
-    
-    def process_element(element: dict) -> dict:
-        """Recursively process elements and their substeps"""
-        if element['type'] == 'subProcess':
-            subprocess_element = {
-                "id": element['id'],
-                "type": "subProcess",
-                "name": element['name'],
-                "isExpanded": False,
-                "elements": []
-            }
-            
-            if 'substeps' in element:
-                # Add start event
-                start_id = f"{element['id']}_start"
-                subprocess_element['elements'].append({
-                    "id": start_id,
-                    "type": "startEvent",
-                    "name": "Start"
-                })
-                
-                prev_id = start_id
-                for idx, substep in enumerate(element['substeps']):
-                    # Recursively process substep in case it has its own substeps
-                    substep_id = f"{element['id']}_substep_{idx}"
-                    substep['id'] = substep_id  # Set the ID before processing
-                    processed_substep = process_element(substep)  # Recursive call
-                    subprocess_element['elements'].append(processed_substep)
-                    
-                    # Create sequence flow
-                    subprocess_element['elements'].append({
-                        "id": f"{element['id']}_flow_{idx}",
-                        "type": "sequenceFlow",
-                        "sourceRef": prev_id,
-                        "targetRef": substep_id
-                    })
-                    prev_id = substep_id
-                
-                # Add end event and final flow
-                end_id = f"{element['id']}_end"
-                subprocess_element['elements'].append({
-                    "id": end_id,
-                    "type": "endEvent",
-                    "name": "End"
-                })
-                subprocess_element['elements'].append({
-                    "id": f"{element['id']}_flow_end",
-                    "type": "sequenceFlow",
-                    "sourceRef": prev_id,
-                    "targetRef": end_id
-                })
-            
-            return subprocess_element
-        else:
-            return {
-                "id": element['id'],
-                "type": element['type'],
-                "name": element['name'],
-                "taskType": element.get('taskType'),
-                "performer": element.get('performer')
-            }
+from .constants import BPMN_TYPES, BPMN_TYPE_VARIANTS
 
-    # Process all top-level elements
-    for element in parsed_elements['elements']:
-        elements.append(process_element(element))
-
-    # Process sequence flows
-    for flow in parsed_elements['sequence_flows']:
-        sequence_flows.append({
-            "id": flow['id'],
-            "sourceRef": flow['sourceRef'],
-            "targetRef": flow['targetRef'],
-            "conditionExpression": flow.get('conditionExpression')
-        })
-
-    return {
-        "process_id": parsed_elements['process_id'],
-        "process_name": parsed_elements['process_name'],
-        "elements": elements,
-        "sequence_flows": sequence_flows
+def generate_intermediary_notation(nlp_output: dict) -> dict:
+    """Convert NLP output into a structured intermediary notation."""
+    intermediary = {
+        "process_id": nlp_output.get("process_id", "Process_1"),
+        "process_name": nlp_output.get("process_name", "Business Process"),
+        "elements": [],
+        "sequence_flows": []
     }
+    
+    element_counts = {}
+    
+    try:
+        for element in nlp_output.get("elements", []):
+            element_type = element["type"]
+            
+            # Convert any variant to canonical snake_case type
+            if element_type not in BPMN_TYPE_VARIANTS:
+                raise ValueError(f"Invalid element type: {element_type}")
+            
+            canonical_type = BPMN_TYPE_VARIANTS[element_type]
+            element_counts[canonical_type] = element_counts.get(canonical_type, 0) + 1
+            
+            node = {
+                "id": f"{BPMN_TYPES[canonical_type]['id_prefix']}_{element_counts[canonical_type]}",
+                "type": canonical_type,
+                "name": element.get("name", f"{canonical_type}_{element_counts[canonical_type]}")
+            }
+            
+            # Handle subprocess elements
+            if canonical_type == 'sub_process' and 'elements' in element:
+                node['elements'] = []
+                for sub_element in element['elements']:
+                    sub_type = BPMN_TYPE_VARIANTS[sub_element['type']]
+                    element_counts[sub_type] = element_counts.get(sub_type, 0) + 1
+                    sub_node = {
+                        "id": f"{BPMN_TYPES[sub_type]['id_prefix']}_{element_counts[sub_type]}",
+                        "type": sub_type,
+                        "name": sub_element.get("name", f"{sub_type}_{element_counts[sub_type]}")
+                    }
+                    node['elements'].append(sub_node)
+            
+            intermediary["elements"].append(node)
+            
+    except Exception as e:
+        logger.error(f"Error in generate_intermediary_notation: {str(e)}")
+        raise
+    
+    # Convert sequence flows with proper IDs
+    for i, flow in enumerate(nlp_output.get("sequence_flows", []), 1):
+        edge = {
+            "id": f"Flow_{i}",
+            "sourceRef": flow.get("sourceRef", flow.get("from")),
+            "targetRef": flow.get("targetRef", flow.get("to"))
+        }
+        intermediary["sequence_flows"].append(edge)
+    
+    return intermediary
 
