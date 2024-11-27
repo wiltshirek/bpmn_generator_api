@@ -1,110 +1,97 @@
-from typing import Dict, Any, Optional
-from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai import OpenAIError, APIError, RateLimitError, APIConnectionError
+from typing import Dict, Any
 from core.config import settings
 from core.logger import logger
 import json
-import traceback
-from lib.validation import validate_intermediary_notation, ValidationError
-from lib.constants import BPMN_TYPES
 
 def build_system_prompt() -> str:
-    """Build system prompt dynamically using constants."""
-    # Example elements using correct ID prefixes from constants
-    example_elements = [
-        {
-            "id": f"{BPMN_TYPES['start_event']['id_prefix']}_1",
-            "type": "start_event",
-            "name": "Start"
-        },
-        {
-            "id": f"{BPMN_TYPES['exclusive_gateway']['id_prefix']}_1",
-            "type": "exclusive_gateway",
-            "name": "Decision"
-        },
-        {
-            "id": f"{BPMN_TYPES['sub_process']['id_prefix']}_1",
-            "type": "sub_process",
-            "name": "Document Verification",
-            "elements": [
-                {
-                    "id": f"{BPMN_TYPES['user_task']['id_prefix']}_1",
-                    "type": "user_task",
-                    "name": "Verify Document"
-                }
-            ]
-        }
-    ]
-
-    example_json = {
-        "process_id": "Process_1",
-        "process_name": "Business Process",
-        "elements": example_elements,
+    return """You are a BPMN process modeling expert. Convert natural language descriptions into structured process definitions.
+    Output must be valid JSON only, no other text.
+    The JSON must follow this structure:
+    {
+        "process_id": "unique_process_id",
+        "process_name": "descriptive name",
+        "elements": [
+            {
+                "id": "unique_element_id",
+                "type": "start_event|end_event|user_task|service_task|exclusive_gateway|parallel_gateway|sub_process",
+                "name": "element name"
+            }
+        ],
         "sequence_flows": [
             {
-                "id": "Flow_1",
-                "sourceRef": "string",
-                "targetRef": "string"
+                "id": "Flow_id",
+                "sourceRef": "source_element_id",
+                "targetRef": "target_element_id"
             }
         ]
-    }
+    }"""
 
-    return f"""You are a BPMN expert. Convert business process descriptions into JSON format.
-    You must ALWAYS respond with valid JSON only, no other text.
-    The JSON must follow this structure:
-    {json.dumps(example_json, indent=2)}
-    
-    Valid element types are: {', '.join(BPMN_TYPES.keys())}
-    Note: sub_process elements MUST contain an 'elements' array with at least one task."""
-
-def process_text(description: str) -> Dict[str, Any]:
-    """Process natural language input using OpenAI's GPT model."""
+def process_text(prompt: str) -> Dict[str, Any]:
+    """Process natural language input into structured format"""
     try:
-        # Input validation
-        if not isinstance(description, str) or not description.strip():
-            raise ValueError("Description must be a non-empty string")
-            
-        # API call
-        response: ChatCompletion = settings.openai_client.chat.completions.create(
+        logger.debug("Processing text with NLP")
+        logger.debug(f"Input prompt: {prompt}")
+        
+        response = settings.openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": build_system_prompt()},
-                {"role": "user", "content": description.strip()}
+                {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=2000
+            temperature=0.2,
+            response_format={"type": "json_object"}
         )
         
-        # Get response content
-        if not response.choices or not response.choices[0].message:
-            logger.error("No valid response from OpenAI")
-            raise ValueError("No valid response received from OpenAI")
-            
-        result = response.choices[0].message.content.strip()
-        if not result:
-            logger.error("Empty response content from OpenAI")
-            raise ValueError("Empty response from OpenAI")
-            
-        logger.debug(f"OpenAI Response: {result}")
-            
-        # Parse and validate JSON
-        try:
-            parsed_elements = json.loads(result)
-        except (json.JSONDecodeError, TypeError, ValueError) as e:
-            logger.error(f"JSON parsing error: {str(e)}")
-            logger.error(f"Raw content that failed parsing: {result}")
-            raise ValueError(f"Invalid JSON response: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error during JSON parsing: {str(e)}")
-            logger.error(f"Raw content that failed parsing: {result}")
-            logger.error("Full traceback:", exc_info=True)
-            raise ValueError(f"Failed to parse JSON response: {str(e)}")
-            
-        # Validate the structure
-        validate_intermediary_notation(parsed_elements)
-        return parsed_elements
+        result = json.loads(response.choices[0].message.content)
+        logger.debug(f"NLP Result: {json.dumps(result, indent=2)}")
+        return result
         
     except Exception as e:
-        logger.error(f"Error in process_text: {str(e)}", exc_info=True)
+        logger.error(f"Failed to process text: {str(e)}")
+        raise
+
+def process_layout_update(prompt: str, existing_bpmn: str, chat_history: list) -> Dict[str, Any]:
+    """Process layout update requests"""
+    system_message = """You are a BPMN XML layout expert. Your task is to modify the given BPMN XML based on the user's layout adjustment requests.
+    
+    You must ALWAYS respond with valid JSON only, no other text or explanations.
+    The JSON response must follow this exact structure:
+    {
+        "modified_bpmn": "the complete modified BPMN XML string",
+        "changes_made": ["list of specific coordinate changes made"],
+        "layout_principles_applied": ["list of layout principles that were applied"],
+        "validation_status": "success|failure",
+        "validation_messages": ["any validation messages or warnings"]
+    }
+    
+    Follow these layout principles:
+    1. Maintain a primarily horizontal flow from left to right
+    2. Prevent any element overlaps
+    3. Subprocess Layout guidelines
+    4. Connection Rules
+    5. General Guidelines
+    
+    Only modify x and y coordinate attributes.
+    Do not change any process logic, flows, or connections."""
+
+    try:
+        logger.debug("Processing layout update")
+        response = settings.openai_client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[
+                {"role": "system", "content": system_message},
+                *[{"role": m.role, "content": m.content} for m in chat_history],
+                {"role": "user", "content": f"Current BPMN XML:\n{existing_bpmn}\n\nLayout request:\n{prompt}"}
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        logger.debug(f"Layout Update Result: {json.dumps(result, indent=2)}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to process layout update: {str(e)}")
         raise
 

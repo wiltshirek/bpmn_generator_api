@@ -1,13 +1,8 @@
-from typing import Dict, Any
-from dataclasses import dataclass
+from typing import Dict, Any, List
 from xml.dom import minidom
-import json
-from .constants import BPMN_TYPES
-
-@dataclass
-class ValidationError(Exception):
-    message: str
-    details: Dict[str, Any] = None
+from core.logger import logger
+from .constants import BPMN_TYPES, GATEWAY_PAIRS
+from .exceptions import ValidationError
 
 def validate_element(element: Dict[str, Any]) -> None:
     """Validate a single BPMN element."""
@@ -63,27 +58,15 @@ def validate_sequence_flow(flow: Dict[str, Any]) -> None:
 def validate_intermediary_notation(notation: Dict[str, Any]) -> None:
     """Validate the intermediary notation structure."""
     required_keys = ['process_id', 'process_name', 'elements', 'sequence_flows']
-    
+    required_fields = ['process_id', 'process_name', 'elements', 'sequence_flows']
     if not all(key in notation for key in required_keys):
         missing_keys = [key for key in required_keys if key not in notation]
         raise ValidationError(f"Missing required keys: {', '.join(missing_keys)}")
     
-    if not notation['elements']:
-        raise ValidationError("Elements array cannot be empty")
-    
-    # Validate all elements
-    for element in notation['elements']:
-        validate_element(element)
-    
-    # Validate sequence flows
-    for flow in notation['sequence_flows']:
-        validate_sequence_flow(flow)
-    
-    # Verify start and end events exist using snake_case
-    has_start = any(e['type'] == 'start_event' for e in notation['elements'])
-    has_end = any(e['type'] == 'end_event' for e in notation['elements'])
-    if not (has_start and has_end):
-        raise ValidationError("Missing start_event or end_event in elements")
+    # Validate gateway pairs
+    validate_gateway_pairs(notation['elements'])
+
+
 
 def validate_bpmn_xml(xml_str: str) -> None:
     """Validate the generated BPMN XML."""
@@ -104,25 +87,20 @@ def validate_bpmn_xml(xml_str: str) -> None:
     except Exception as e:
         raise ValidationError(f"Invalid BPMN XML: {str(e)}") 
 
-def validate_json_structure(parsed_elements: Dict[str, Any]) -> None:
-    """Validates the JSON structure meets all BPMN requirements."""
-    required_keys = ['process_id', 'process_name', 'elements', 'sequence_flows']
-    if not all(key in parsed_elements for key in required_keys):
-        raise ValueError("Missing required keys in OpenAI response")
+
+def validate_gateway_pairs(elements: List[Dict[str, Any]]) -> None:
+    """Validate that gateway pairs are properly matched"""
+    gateway_stack = []
     
-    # Validate elements array has start and end events
-    elements = parsed_elements['elements']
-    has_start = any(e.get('type') == 'start_event' for e in elements)
-    has_end = any(e.get('type') == 'end_event' for e in elements)
-    if not (has_start and has_end):
-        raise ValueError("Missing start_event or end_event in elements")
-    
-    # Validate element structure
     for element in elements:
-        if not all(key in element for key in ['id', 'type', 'name']):
-            raise ValueError(f"Element missing required fields: {element}")
+        if element['type'] in GATEWAY_PAIRS:
+            if GATEWAY_PAIRS[element['type']] == 'start':
+                gateway_stack.append(element)
+            elif GATEWAY_PAIRS[element['type']] == 'end':
+                if not gateway_stack:
+                    raise ValidationError(f"Found end gateway '{element['id']}' without matching start gateway")
+                gateway_stack.pop()
     
-    # Validate sequence flows
-    for flow in parsed_elements['sequence_flows']:
-        if not all(key in flow for key in ['id', 'sourceRef', 'targetRef']):
-            raise ValueError(f"Sequence flow missing required fields: {flow}")
+    if gateway_stack:
+        unmatched = [g['id'] for g in gateway_stack]
+        raise ValidationError(f"Unmatched start gateways: {', '.join(unmatched)}")

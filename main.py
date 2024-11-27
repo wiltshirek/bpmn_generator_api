@@ -1,32 +1,22 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from lib.bpmn_generator import router as bpmn_router
-from core.config import settings
-from core.logger import logger
+from lib.bpmn_generator import router
 import uvicorn
+import logging
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
-    yield
-    # Shutdown
-    logger.info(f"Shutting down {settings.PROJECT_NAME}")
-
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.PROJECT_VERSION,
-    lifespan=lifespan
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-# Register only the BPMN router
-app.include_router(bpmn_router, prefix="/api", tags=["bpmn"])
+app = FastAPI()
+app.include_router(router)
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",  # Required for Docker
+        host="0.0.0.0",
         port=8000,
-        reload=False  # Disable reload in production
+        reload=True,
+        workers=1
     )
 
